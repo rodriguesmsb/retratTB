@@ -1,0 +1,330 @@
+---
+title: "Map"
+output: html_document
+date: '2022-10-05'
+editor_options: 
+  chunk_output_type: console
+---
+
+
+```{r}
+rm(list=ls())
+source("../../Auxiliary_functions.R")
+libraries <-  c("tidyverse",  "survminer", "nnet", "lme4", "scales", "survival",
+                "finalfit","compareGroups", "sjPlot",
+                "meta", "fmsb", "ggsankey", "forestplot")
+lapply(libraries, require, character.only = TRUE)
+```
+
+
+```{r}
+data <-  read_csv("../data/Re_enter_data.csv")
+names <- read_csv("~/Dados/IBGE/Info_regioes.csv")
+```
+
+
+```{r}
+data <- data %>%
+  rename(cod = sg_uf) %>% 
+  mutate(idade = cut(idade, breaks = c(18,35,50,65,80, Inf), right = FALSE),
+         cod = as.numeric(cod)) %>% 
+  mutate(covid = ifelse(nu_ano <= 2020,0,1))
+```
+
+
+```{r}
+#create cases per state
+cases_per_state <- data %>% 
+  group_by(cod, tratamento) %>% 
+  summarise(cases = n())
+
+
+
+cases_per_state <- cases_per_state %>% 
+  spread(key = "tratamento", value = "cases") %>% 
+  left_join(names) %>% 
+  mutate(total = `New Case` + `Re enter` + `Reicidiva`) %>% 
+  mutate(inc_tot = total/pop*100000,
+         re_inc = `Re enter`/pop*100000,
+         new_inc = `New Case`/pop*100000,
+         reicidiva = `Reicidiva`/pop*100000)
+write_csv(cases_per_state, "../results/Mapas_re_entrada.csv")
+```
+
+
+```{r}
+plot_bar(create_bar_data(data %>% filter(entrada == "New Case")))
+ggsave("../results/Figure_3A_new_case.pdf", device = "pdf", width = 20, height = 18)
+plot_bar(create_bar_data(data %>% filter(entrada == "Re enter")))
+ggsave("../results/Figure_3B_re_enter.pdf", device = "pdf", width = 20, height = 18)
+plot_bar(create_bar_data(data %>% filter(tratamento == "Reicidiva")))
+ggsave("../results/Figure_3C_re_enter.pdf", device = "pdf", width = 20, height = 18)
+```
+
+
+```{r}
+#logistic model
+data %>% 
+  group_by(tratamento) %>%
+  summarise(n = n())
+
+data %>% 
+  group_by(situa_ence) %>%
+  summarise(n = n())
+
+
+model_data <- data %>% 
+  filter(situa_ence %in% c("Cure", "Treatment incomplete", "Death", "Failure")) %>% 
+  mutate(logistic_outcome = ifelse(situa_ence == "Cure", 0,1))
+
+plot_sankey(create_sankey_data(model_data %>% filter(tratamento == "New Case"), population = "New Case"))
+ggsave("../results/Figure_4A.pdf", device = "pdf", width = 20, height = 20)
+
+plot_sankey(create_sankey_data(model_data %>% filter(tratamento == "Re enter"), population = "Re enter"))
+ggsave("../results/Figure_4B.pdf", device = "pdf", width = 20, height = 20)
+
+plot_sankey(create_sankey_data(model_data %>% filter(tratamento == "Reicidiva"), population = "Recurrent"))
+ggsave("../results/Figure_4C.pdf", device = "pdf", width = 20, height = 20)
+
+model_data %>% 
+   group_by(entrada) %>%
+   summarise(n = n())
+  
+
+#compute descritive analysis
+# results_desc_model <- compareGroups(entrada ~  pop_liber + pop_rua + pop_saude + pop_imig + forma + agravaids +
+#                            agravalcoo + agravdiabe + agravdoenc + agravdroga + agravtabac +
+#                            bacilosc_e + bacilosc_1 + bacilosc_2 + bacilosc_3 + bacilosc_4 +
+#                            raiox_tora + hiv + histopatol + cultura_es + test_sensi + tratsup_at +
+#                            idade + cs_raca + cs_sexo + cs_gestant + situa_ence + cs_escol_n, 
+#                          data = model_data,
+#                          include.miss = TRUE)
+# export2word(createTable(results_desc_model, show.all = TRUE), file = "../results/Table_2_model_re_enter.docx")
+
+#run logistic model 
+logistic_model <- glm(logistic_outcome ~ idade + cs_raca + cs_sexo + cs_escol_n + agravalcoo +
+                        cs_gestant + agravdoenc + tratamento + hiv + pop_imig + pop_saude + pop_rua +
+                        tratsup_at + agravdiabe + agravdroga + agravtabac,
+                      family = "binomial", 
+                      data = model_data)
+
+logistic_result <- plot_forest(create_coef(logistic_model))
+pdf(file='../results/Figure_5A_logistic_model.pdf', width = 22, height = 18)
+logistic_result
+dev.off()
+
+
+#include covid as variable
+logistic_model_covid <- glm(logistic_outcome ~ idade + cs_raca + cs_sexo + cs_escol_n +
+                              agravalcoo + cs_gestant + agravdoenc + tratamento + hiv +
+                              pop_imig + pop_saude + pop_rua + tratsup_at + agravdiabe +
+                              agravdroga + agravtabac + covid,
+                      family = "binomial", 
+                      data = model_data)
+
+logistic_result_covid <- plot_forest(create_coef(logistic_model_covid))
+pdf(file='../results/Figure_5A_logistic_model_covid.pdf', width = 22, height = 18)
+logistic_result_covid
+dev.off()
+
+
+
+#perform senstitivity analysis including transf
+data <-  data %>% 
+  mutate(logistic_outcome = ifelse(situa_ence == "Cure", 0,1))
+
+logistic_model_complet <- glm(logistic_outcome ~ idade + cs_raca + cs_sexo + cs_escol_n + agravalcoo +
+                                cs_gestant + agravdoenc + tratamento + hiv + pop_imig + pop_saude + pop_rua +
+                                tratsup_at + agravdiabe + agravdroga + agravtabac + pop_liber,
+                      family = "binomial", 
+                      data = data)
+logistic_result <- plot_forest(create_coef(logistic_model_complet))
+pdf(file='../results/Figure_S1A_logistic_tansf_to_unf.pdf', width = 22, height = 18)
+logistic_result
+dev.off()
+
+
+data <-  data %>% 
+  mutate(logistic_outcome = ifelse(situa_ence == "Cure" | situa_ence == "Transfer", 0,1))
+
+logistic_model_complet <- glm(logistic_outcome ~ idade + cs_raca + cs_sexo + cs_escol_n + agravalcoo +
+                        cs_gestant + agravdoenc + tratamento + hiv + pop_imig + pop_saude + pop_rua +
+                        tratsup_at + agravdiabe + agravdroga + agravtabac + pop_liber,
+                      family = "binomial", 
+                      data = data)
+logistic_result <- plot_forest(create_coef(logistic_model_complet))
+pdf(file='../results/Figure_S1B_logistic_tansf_to_cure.pdf', width = 22, height = 18)
+logistic_result
+dev.off()
+```
+
+
+```{r}
+logistic_model_retrat <- glm(logistic_outcome ~ idade + cs_raca + cs_sexo + cs_escol_n + agravalcoo +
+                               cs_gestant + agravdoenc + hiv + pop_imig + pop_saude + pop_rua +
+                               tratsup_at + agravdiabe + agravdroga + agravtabac + pop_liber,
+                             family = "binomial", 
+                             data = model_data,
+                             subset = (entrada == "Re enter"))
+
+logistic_result_retrat <- plot_forest(create_coef(logistic_model_retrat))
+pdf(file='../results/Figure_5B_logistic_model_retrat.pdf', width = 22, height = 18)
+logistic_result_retrat
+dev.off()
+
+
+#include covid
+logistic_model_retrat_covid <- glm(logistic_outcome ~ idade + cs_raca + cs_sexo + cs_escol_n +
+                                     agravalcoo + cs_gestant + agravdoenc + hiv + pop_imig +
+                                     pop_saude + pop_rua + tratsup_at + agravdiabe +
+                                     agravdroga + agravtabac + pop_liber + covid,
+                             family = "binomial", 
+                             data = model_data,
+                             subset = (entrada == "Re enter"))
+
+logistic_result_retrat_covid <- plot_forest(create_coef(logistic_model_retrat_covid))
+pdf(file='../results/Figure_5B_logistic_model_retrat_covid.pdf', width = 22, height = 18)
+logistic_model_retrat_covid
+dev.off()
+
+#perform senstitivity analysis including transf in retra grup
+data <-  data %>% 
+  mutate(logistic_outcome = ifelse(situa_ence == "Cure", 0,1))
+
+logistic_model_complet <- glm(logistic_outcome ~ idade + cs_raca + cs_sexo + cs_escol_n + agravalcoo +
+                        cs_gestant + agravdoenc + tratamento + hiv + pop_imig + pop_saude + pop_rua +
+                        tratsup_at + agravdiabe + agravdroga + agravtabac + pop_liber,
+                      family = "binomial", 
+                      data = data,
+                      subset = (entrada == "Re enter"))
+logistic_result <- plot_forest(create_coef(logistic_model_complet))
+pdf(file='../results/Figure_S1C_logistic_retrat_tansf_to_unf.pdf', width = 22, height = 18)
+logistic_result
+dev.off()
+
+
+data <-  data %>% 
+  mutate(logistic_outcome = ifelse(situa_ence == "Cure" | situa_ence == "Transfer", 0,1))
+
+logistic_model_complet <- glm(logistic_outcome ~ idade + cs_raca + cs_sexo + cs_escol_n + agravalcoo +
+                        cs_gestant + agravdoenc + tratamento + hiv + pop_imig + pop_saude + pop_rua +
+                        tratsup_at + agravdiabe + agravdroga + agravtabac + pop_liber,
+                      family = "binomial", 
+                      data = data,
+                      subset = (entrada == "Re enter"))
+logistic_result <- plot_forest(create_coef(logistic_model_complet))
+pdf(file='../results/Figure_S1D_logistic_retrat_tansf_to_cure.pdf', width = 22, height = 18)
+logistic_result
+dev.off()
+```
+
+
+
+
+```{r}
+#multinomial model
+multinomial_model <-  multinom(situa_ence ~ idade + cs_raca + cs_sexo + cs_escol_n + agravalcoo +
+                        cs_gestant + agravdoenc + tratamento + hiv + pop_imig + pop_saude + pop_rua +
+                        tratsup_at + agravdiabe + agravdroga + agravtabac + pop_liber, 
+         data = model_data,
+         subset = (situa_ence %in% c("Cure", "Treatment incomplete", "Death")))
+
+
+multinomial_result_death <- plot_forest(create_mult_ci(multinomial_model) %>% filter(model == "Death"))
+pdf(file='../results/Figure_6A_Multinomial_death.pdf', width = 22, height = 18)
+multinomial_result_death
+dev.off()
+
+multinomial_result_ltfu <- plot_forest(create_mult_ci(multinomial_model) %>% filter(model == "Treatment incomplete"))
+pdf(file='../results/Figure_6B_Multinomial_ltfu.pdf', width = 22, height = 18)
+multinomial_result_ltfu
+dev.off()
+
+#include covid
+multinomial_model_covid <-  multinom(situa_ence ~ idade + cs_raca + cs_sexo + cs_escol_n + agravalcoo +
+                        cs_gestant + agravdoenc + tratamento + hiv + pop_imig + pop_saude + pop_rua +
+                        tratsup_at + agravdiabe + agravdroga + agravtabac + pop_liber + covid, 
+         data = model_data,
+         subset = (situa_ence %in% c("Cure", "Treatment incomplete", "Death")))
+
+
+multinomial_result_death_covid <- plot_forest(create_mult_ci(multinomial_model_covid) %>% filter(model == "Death"))
+pdf(file='../results/Figure_6A_Multinomial_death_covid.pdf', width = 22, height = 18)
+multinomial_result_death_covid
+dev.off()
+
+multinomial_result_ltfu_covid <- plot_forest(create_mult_ci(multinomial_model_covid) %>% filter(model == "Treatment incomplete"))
+pdf(file='../results/Figure_6B_Multinomial_ltfu_covid.pdf', width = 22, height = 18)
+multinomial_result_ltfu_covid
+dev.off()
+
+
+
+multinomial_model_re <-  multinom(situa_ence ~ idade + cs_raca + cs_sexo + cs_escol_n + agravalcoo +
+                        cs_gestant + agravdoenc + hiv + pop_imig + pop_saude + pop_rua +
+                        tratsup_at + agravdiabe + agravdroga + agravtabac + pop_liber, 
+         data = model_data,
+         subset = (situa_ence %in% c("Cure", "Treatment incomplete", "Death") & entrada == "Re enter"))
+
+multinomial_result_death_re <- plot_forest(create_mult_ci(multinomial_model_re) %>% filter(model == "Death"))
+pdf(file='../results/Figure_6C_Multinomial_death_re.pdf', width = 22, height = 18)
+multinomial_result_death_re
+dev.off()
+
+multinomial_result_ltfu_re <- plot_forest(create_mult_ci(multinomial_model_re) %>% 
+                                            filter(model == "Treatment incomplete"))
+pdf(file='../results/Figure_6D_Multinomial_ltfu_re.pdf', width = 22, height = 18)
+multinomial_result_ltfu_re
+dev.off()
+
+
+#include covid
+multinomial_model_re_covid <-  multinom(situa_ence ~ idade + cs_raca + cs_sexo + cs_escol_n + agravalcoo +
+                        cs_gestant + agravdoenc + hiv + pop_imig + pop_saude + pop_rua +
+                        tratsup_at + agravdiabe + agravdroga + agravtabac + pop_liber + covid, 
+         data = model_data,
+         subset = (situa_ence %in% c("Cure", "Treatment incomplete", "Death") & entrada == "Re enter"))
+
+multinomial_result_death_re_covid <- plot_forest(create_mult_ci(multinomial_model_re_covid) %>% filter(model == "Death"))
+pdf(file='../results/Figure_6C_Multinomial_death_re_covid.pdf', width = 22, height = 18)
+multinomial_result_death_re_covid
+dev.off()
+
+multinomial_result_ltfu_re_covid <- plot_forest(create_mult_ci(multinomial_model_re_covid) %>% 
+                                            filter(model == "Treatment incomplete"))
+pdf(file='../results/Figure_6D_Multinomial_ltfu_re_covid.pdf', width = 22, height = 18)
+multinomial_result_ltfu_re_covid
+dev.off()
+```
+
+
+```{r}
+survival_data <- data %>% 
+  filter(time_in_SINAN >= 0) %>% 
+  filter(time_in_SINAN <= 1000) %>% 
+  mutate(state_id = as.factor(sg_uf_not),
+         year = as.numeric(format(as.Date(dt_notific), "%Y")),
+         cases = 1)
+
+
+survival_data <- survival_data %>% 
+  filter(situa_ence %in% c('Cure', 'Death', 'Treatment incomplete', 'Failure')) %>%
+  mutate(outcome = ifelse(situa_ence == "Cure", 0, 1),
+         tratamento = ifelse(tratamento == "New Case", "New Case", "Re_enter")) %>% 
+  filter(time_in_SINAN <= 180)
+
+survival_model_complete <- survfit(Surv(time_in_SINAN) ~ tratamento, data = survival_data)
+plot_survival(survival_model_complete)
+```
+
+
+
+
+
+
+
+
+
+
+
+
